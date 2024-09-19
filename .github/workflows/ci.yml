@@ -1,0 +1,93 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+    paths-ignore: ['**.md']
+  pull_request:
+    branches: [main]
+    paths-ignore: ['**.md']
+  workflow_dispatch:
+
+jobs:
+  ci:
+    strategy:
+      matrix:
+        os: [ubuntu-latest, macos-13, macos-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+
+    defaults:
+      run:
+        shell: bash
+
+    steps:
+    - name: Checkout [${{ github.repository }}]
+      uses: actions/checkout@v4
+
+    - name: Create setup script
+      if: ${{ runner.os == 'Linux' }}
+      env:
+        SCRIPTS_DIR: ${{ runner.temp }}/scripts
+      run: |
+        pwd
+        mkdir "$SCRIPTS_DIR"
+        cd "$SCRIPTS_DIR"
+        cat >init.sql <<EOF
+          ALTER SESSION SET CONTAINER = FREEPDB1;
+          CREATE USER test IDENTIFIED BY test QUOTA UNLIMITED ON USERS;
+          GRANT CONNECT, RESOURCE TO test;
+          GRANT CREATE TABLE TO test;
+          ALTER SESSION SET CURRENT_SCHEMA = test;
+        EOF
+        cat init.sql
+
+    - name: Setup Oracle container on Linux runner
+      if: ${{ runner.os == 'Linux' }}
+      uses: gvenzl/setup-oracle-free@v1
+      with:
+        container-runtime: docker
+        app-user: app_user
+        app-user-password: app_user_password
+        setup-scripts: ${{ runner.temp }}/scripts
+
+    - name: Check Oracle container logs for errors
+      if: ${{ runner.os == 'Linux' }}
+      run: |
+        docker container ls
+        while : ; do
+          docker container logs oracledb | tee -a /tmp/oracledb.log
+          if grep 'DATABASE IS READY TO USE!' /tmp/oracledb.log >/dev/null; then
+            break
+          fi
+          sleep 1s
+        done
+        if grep 'ERROR' /tmp/oracledb.log >/dev/null; then
+          echo "[ERR] Something went wrong!"
+          echo "[ERR] See above logs for more details."
+          exit 1
+        fi
+
+    - name: Set up Oracle Instant Client
+      id: setup
+      uses: ./
+
+    - name: Check output parameter [install-path]
+      run: echo '${{ steps.setup.outputs.install-path }}'
+
+    - name: Check sqlplus version
+      run: sqlplus -V
+
+    - name: Run SQL queries on Linux runner
+      if: ${{ runner.os == 'Linux' }}
+      run: |
+        sqlplus -s test/test@localhost:1521/FREEPDB1 <<EOF
+          CREATE TABLE Test
+          (
+            ID INT
+          );
+          INSERT INTO Test (ID) VALUES(123);
+          INSERT INTO Test (ID) VALUES(456);
+          INSERT INTO Test (ID) VALUES(789);
+        EOF
+
+        sqlplus -s test/test@localhost:1521/FREEPDB1 <<< "SELECT * FROM Test;"

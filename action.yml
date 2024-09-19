@@ -1,0 +1,21 @@
+name: setup-oracle-instant-client-action
+description: GitHub Action to set up Oracle Instant Client
+author: Azeem Sajid <azeem.sajid@gmail.com>
+
+branding:
+  icon: download
+  color: red
+
+outputs:
+  install-path:
+    description: Absolute install path of Oracle Instant Client
+    value: ${{ steps.setup.outputs.install-path }}
+
+runs:
+  using: composite
+
+  steps:
+  - name: Setup
+    id: setup
+    shell: bash
+    run: $GITHUB_ACTION_PATH/scripts/setup.bash
