@@ -23,6 +23,9 @@ Supports Linux, macOS, and Windows runners.
 ```yml
 - name: Set up Oracle Instant Client
   uses: iamazeem/setup-oracle-instant-client-action@v1
+
+- name: Check sqlplus version
+  run: sqlplus -V
 ```
 
 See [CI workflow](./.github/workflows/ci.yml) for a detailed example with

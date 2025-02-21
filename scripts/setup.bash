@@ -11,6 +11,9 @@ echo "[INF] - RUNNER_ARCH: $RUNNER_ARCH"
 INSTALL_PATH=
 
 if [[ $RUNNER_OS == "Linux" ]]; then
+    if [[ -f /usr/lib/x86_64-linux-gnu/libaio.so.1t64 ]]; then
+        sudo ln -sr /usr/lib/x86_64-linux-gnu/libaio.so.1t64 /usr/lib/x86_64-linux-gnu/libaio.so.1
+    fi
     URLS=()
     if [[ $RUNNER_ARCH == "X86" ]]; then
         URLS=(
