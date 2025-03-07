@@ -2,13 +2,67 @@
 
 set -eo pipefail
 
-echo "[INF] Installing Oracle Instant Client..."
-
-echo "[INF] - RUNNER_ENVIRONMENT: $RUNNER_ENVIRONMENT"
-echo "[INF] - RUNNER_OS: $RUNNER_OS"
-echo "[INF] - RUNNER_ARCH: $RUNNER_ARCH"
+echo "::group::🔍 Inspecting runner..."
+echo "RUNNER_ENVIRONMENT: $RUNNER_ENVIRONMENT"
+echo "RUNNER_OS: $RUNNER_OS"
+echo "RUNNER_ARCH: $RUNNER_ARCH"
+echo "::endgroup::"
 
 INSTALL_PATH=
+
+function download() {
+    echo "::group::⬇️ Downloading..."
+    local url err fail=false
+    for url in "${URLS[@]}"; do
+        err=$(curl -sSfLO "$url" 2>&1) && echo "✅ $url" && continue
+        printf "❌ %s\n%s\n" "$url" "$err"
+        fail=true
+    done
+    echo "::endgroup::"
+    if $fail; then
+        echo "::error::Failed to download!"
+        exit 1
+    fi
+}
+
+function extract() {
+    echo "::group::📦 Extracting..."
+    local file err fail=false
+    for file in instantclient-*.zip; do
+        err=$(unzip -qo "$file" 2>&1) && echo "✅ $file" && continue
+        printf "❌ %s\n%s\n" "$file" "$err"
+        fail=true
+    done
+    echo "::endgroup::"
+    if $fail; then
+        echo "::error::Failed to extract!"
+        exit 1
+    fi
+    rm -f ./*.zip
+    INSTALL_PATH="$(realpath ./instantclient_*)"
+}
+
+function install() {
+    echo "::group::📦 Installing..."
+    local file err fail=false
+    for file in instantclient-*.dmg; do
+        err=$({
+            hdiutil mount -quiet "$file" &&
+                cd /Volumes/instantclient-* &&
+                ./install_ic.sh >/dev/null &&
+                hdiutil unmount -force -quiet /Volumes/instantclient-*
+        } 2>&1) && echo "✅ $file" && continue
+        printf "❌ %s\n%s\n" "$file" "$err"
+        fail=true
+    done
+    echo "::endgroup::"
+    if $fail; then
+        echo "::error::Failed to install!"
+        exit 1
+    fi
+    rm -f ./*.dmg
+    INSTALL_PATH="$(realpath /Users/"$USER"/Downloads/instantclient_*)"
+}
 
 if [[ $RUNNER_OS == "Linux" ]]; then
     if [[ -f /usr/lib/x86_64-linux-gnu/libaio.so.1t64 ]]; then
@@ -31,28 +85,14 @@ if [[ $RUNNER_OS == "Linux" ]]; then
             https://download.oracle.com/otn_software/linux/instantclient/instantclient-sqlplus-linux-arm64.zip
         )
     else
-        echo "[ERR] Unsupported architecture! [$RUNNER_ARCH]"
+        echo "::error::Unsupported architecture!"
         exit 1
     fi
 
-    cd "$RUNNER_TEMP"
+    cd "$RUNNER_TEMP" && download && extract
 
-    for URL in "${URLS[@]}"; do
-        echo "[INF] Downloading... [$URL]"
-        wget --quiet "$URL"
-    done
-
-    for ZIP in instantclient-*.zip; do
-        echo "[INF] Extracting... [$ZIP]"
-        unzip -q -o "$ZIP"
-    done
-
-    rm -rf "$RUNNER_TEMP"/*.zip
-
-    INSTALL_PATH="$(realpath "$RUNNER_TEMP"/instantclient_*)"
-
-    echo "[INF] Running ldconfig..."
-    echo "$INSTALL_PATH" | sudo tee /etc/ld.so.conf.d/oracle-instantclient.conf
+    echo "::notice::Running ldconfig..."
+    echo "$INSTALL_PATH" | sudo tee /etc/ld.so.conf.d/oracle-instantclient.conf >/dev/null
     sudo ldconfig
 elif [[ $RUNNER_OS == "macOS" ]]; then
     URLS=()
@@ -67,29 +107,11 @@ elif [[ $RUNNER_OS == "macOS" ]]; then
             https://download.oracle.com/otn_software/mac/instantclient/instantclient-sqlplus-macos-arm64.dmg
         )
     else
-        echo "[ERR] Unsupported architecture! [$RUNNER_ARCH]"
+        echo "::error::Unsupported architecture!"
         exit 1
     fi
 
-    cd "$RUNNER_TEMP"
-
-    for URL in "${URLS[@]}"; do
-        echo "[INF] Downloading... [$URL]"
-        wget --quiet "$URL"
-    done
-
-    for DMG in instantclient-*.dmg; do
-        echo "[INF] Installing... [$DMG]"
-        cd "$RUNNER_TEMP"
-        hdiutil mount -quiet "$DMG"
-        cd /Volumes/instantclient-*
-        ./install_ic.sh >/dev/null
-        hdiutil unmount -force -quiet /Volumes/instantclient-*
-    done
-
-    rm -rf "$RUNNER_TEMP"/*.dmg
-
-    INSTALL_PATH="$(realpath /Users/"$USER"/Downloads/instantclient_*)"
+    cd "$RUNNER_TEMP" && download && install
 elif [[ $RUNNER_OS == "Windows" ]]; then
     URLS=()
     if [[ $RUNNER_ARCH == "X86" ]]; then
@@ -103,40 +125,20 @@ elif [[ $RUNNER_OS == "Windows" ]]; then
             https://download.oracle.com/otn_software/nt/instantclient/instantclient-sqlplus-windows.zip
         )
     else
-        echo "[ERR] Unsupported architecture! [$RUNNER_ARCH]"
+        echo "::error::Unsupported architecture!"
         exit 1
     fi
 
-    echo "[INF] Installing wget..."
-    if ! choco install wget --no-progress >/dev/null; then
-        echo "[ERR] Failed to install wget!"
-        exit 1
-    fi
-
-    cd "$RUNNER_TEMP"
-
-    for URL in "${URLS[@]}"; do
-        echo "[INF] Downloading... [$URL]"
-        wget --quiet "$URL"
-    done
-
-    for ZIP in instantclient-*.zip; do
-        echo "[INF] Extracting... [$ZIP]"
-        unzip -q -o "$ZIP"
-    done
-
-    rm -rf "$RUNNER_TEMP"/*.zip
-
-    INSTALL_PATH="$(realpath "$RUNNER_TEMP"/instantclient_*)"
+    cd "$RUNNER_TEMP" && download && extract
 else
-    echo "[ERR] Unsupported OS! [$RUNNER_OS]"
+    echo "::error::Unsupported OS!"
     exit 1
 fi
 
-echo "[INF] Setting PATH... [$INSTALL_PATH]"
+echo "::notice::Adding '$INSTALL_PATH' to PATH"
 echo "$INSTALL_PATH" >>"$GITHUB_PATH"
 
-echo "[INF] Setting output parameter... [install-path]"
+echo "::notice::Setting 'install-path' output parameter"
 echo "install-path=$INSTALL_PATH" >>"$GITHUB_OUTPUT"
 
-echo "[INF] Installed successfully!"
+echo "::notice::Installed successfully!"
